@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LocalConvert</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="theme-color" content="#0e7c5a">
+<style>
+:root{--bg:#f3f5f2;--fg:#17211b;--mut:#5d6b62;--card:#fff;--line:#cfd8d1;--ac:#0e7c5a;--acfg:#fff;--err:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#121a15;--fg:#e6efe8;--mut:#93a499;--card:#1a251e;--line:#2f4036;--ac:#3fcf9b;--acfg:#06241a;--err:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 "Noto Sans TC",system-ui,-apple-system,sans-serif;padding:env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 24px)}
+main{max-width:640px;margin:0 auto}
+h1{font-size:1.9rem;margin:28px 0 4px;letter-spacing:.02em}
+p.s{color:var(--mut);margin:0 0 20px}
+#drop{display:block;border:2px dashed var(--ac);border-radius:14px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--card)}
+#drop.on{background:color-mix(in srgb,var(--ac) 12%,var(--card))}
+#drop b{display:block;font-size:1.1rem}
+#drop span{color:var(--mut);font-size:.9rem}
+input[type=file]{display:none}
+.row{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap}
+select,button{font:inherit;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+select{flex:1;min-width:150px}
+button.go{background:var(--ac);color:var(--acfg);border-color:var(--ac);font-weight:700}
+button:disabled{opacity:.5}
+button:focus-visible,select:focus-visible,#drop:focus-within{outline:3px solid var(--ac);outline-offset:2px}
+ul{list-style:none;padding:0;margin:0}
+li{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.n{word-break:break-all;font-weight:600}
+.m{color:var(--mut);font-size:.85rem}
+.bar{height:6px;background:var(--line);border-radius:3px;margin:8px 0 4px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ac)}
+a.dl{color:var(--ac);font-weight:700}
+.err{color:var(--err)}
+details{margin-top:22px;color:var(--mut);font-size:.9rem}
+</style>
+</head>
+<body>
+<main>
+<h1>LocalConvert</h1>
+<p class="s">檔案只在你的裝置上處理，不會上傳。支援影片、音訊、圖片、PDF、Word、Excel、Markdown 等。</p>
+
+<label id="drop"><input id="f" type="file" multiple><b>點擊選擇檔案，或拖曳到這裡</b><span>可一次選多個，會依序轉換</span></label>
+
+<div class="row">
+<select id="fmt" aria-label="目標格式">
+<optgroup label="影片"><option>mp4</option><option>webm</option><option>mkv</option><option>mov</option><option>avi</option><option>flv</option><option>wmv</option><option>mpg</option><option>ogv</option><option>m4v</option><option>gif</option></optgroup>
+<optgroup label="音訊（也可從影片擷取）"><option>mp3</option><option>wav</option><option>ogg</option><option>flac</option><option>m4a</option><option>aac</option><option>wma</option><option>aiff</option><option>ac3</option></optgroup>
+<optgroup label="圖片（PDF 可轉成每頁一張）"><option>png</option><option>jpg</option><option>webp</option><option>avif</option><option>bmp</option><option>tiff</option><option>tga</option><option>ico</option></optgroup>
+<optgroup label="文件"><option>pdf</option><option>txt</option><option>html</option><option>doc</option></optgroup>
+<optgroup label="表格與資料"><option>xlsx</option><option>xls</option><option>ods</option><option>csv</option><option>tsv</option><option>json</option><option>xml</option><option>yaml</option></optgroup>
+<optgroup label="其他"><option>zip</option><option>base64</option></optgroup>
+</select>
+<button class="go" id="go" disabled>開始轉換</button>
+<button id="clr">清空</button>
+</div>
+
+<ul id="list"></ul>
+
+<details><summary>關於大檔案與手機</summary>
+<p>PDF、Word、Excel 等元件會在第一次使用時才下載。文字轉 PDF 會把內容畫成圖片頁（支援中文，但文字無法選取）。轉換時會自動保持螢幕不熄滅，並在離開頁面前提醒。瀏覽器沒有檔案大小限制，但音訊／影片轉檔需把檔案放進記憶體，實際上限取決於裝置（約 1–2 GB，手機通常更低）。太大的檔案被系統強制關閉頁面時，網頁端無法阻止，建議在電腦上處理。</p></details>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const AV={
+ mp4:['-c:v','libx264','-preset','veryfast','-crf','26','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart'],
+ mov:['-c:v','libx264','-preset','veryfast','-crf','26','-pix_fmt','yuv420p','-c:a','aac'],
+ mkv:['-c:v','libx264','-preset','veryfast','-crf','26','-pix_fmt','yuv420p','-c:a','aac'],
+ webm:['-c:v','libvpx','-b:v','1M','-c:a','libvorbis'],
+ avi:['-c:v','mpeg4','-q:v','5','-c:a','libmp3lame'],
+ gif:['-vf','fps=12,scale=480:-1:flags=lanczos','-loop','0'],
+ mp3:['-vn','-c:a','libmp3lame','-q:a','2'],wav:['-vn'],flac:['-vn'],
+ ogg:['-vn','-c:a','libvorbis'],m4a:['-vn','-c:a','aac'],aac:['-vn','-c:a','aac'],
+ flv:['-c:v','flv','-c:a','libmp3lame','-ar','44100'],wmv:['-c:v','wmv2','-c:a','wmav2'],
+ mpg:['-c:v','mpeg2video','-q:v','4','-c:a','mp2'],ogv:['-c:v','libtheora','-q:v','6','-c:a','libvorbis'],
+ m4v:['-c:v','libx264','-preset','veryfast','-crf','26','-pix_fmt','yuv420p','-c:a','aac'],
+ wma:['-vn','-c:a','wmav2'],aiff:['-vn'],ac3:['-vn','-c:a','ac3'],
+ bmp:[],tiff:[],tga:[],ico:['-vf','scale=256:256:force_original_aspect_ratio=decrease']
+};
+const CANVAS={png:'image/png',jpg:'image/jpeg',webp:'image/webp',avif:'image/avif'};
+let items=[],ff=null,busy=false,lock=null;
+
+const size=n=>n>1e9?(n/1e9).toFixed(2)+' GB':n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3|0)+' KB';
+const ext=n=>(n.split('.').pop()||'').toLowerCase();
+
+function add(files){
+ for(const file of files){
+  const li=document.createElement('li');
+  li.innerHTML='<div class="n"></div><div class="m"></div><div class="bar"><i></i></div><div class="st m">等待中</div>';
+  li.querySelector('.n').textContent=file.name;
+  li.querySelector('.m').textContent=size(file.size);
+  $('list').append(li);
+  items.push({file,li,done:false});
+ }
+ $('go').disabled=!items.length;
+}
+$('f').onchange=e=>{add(e.target.files);e.target.value=''};
+const d=$('drop');
+['dragover','dragenter'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.add('on')}));
+['dragleave','drop'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.remove('on')}));
+d.addEventListener('drop',e=>add(e.dataTransfer.files));
+$('clr').onclick=()=>{if(busy)return;items.forEach(i=>i.url&&URL.revokeObjectURL(i.url));items=[];$('list').innerHTML='';$('go').disabled=true};
+
+addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue=''}});
+async function keepAwake(){try{if('wakeLock' in navigator)lock=await navigator.wakeLock.request('screen')}catch(_){}}
+document.addEventListener('visibilitychange',()=>{if(busy&&document.visibilityState==='visible')keepAwake()});
+
+async function loadFF(set){
+ if(ff)return ff;
+ if(!window.FFmpeg)throw new Error('無法載入轉檔引擎，請檢查網路連線');
+ ff=FFmpeg.createFFmpeg({log:false,corePath:'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js'});
+ await ff.load();
+ return ff;
+}
+
+const L={},CDN='https://cdn.jsdelivr.net/npm/';
+const lib=u=>L[u]||(L[u]=new Promise((ok,no)=>{const e=document.createElement('script');e.src=u;e.onload=ok;e.onerror=()=>no(new Error('無法載入元件，請檢查網路'));document.head.append(e)}));
+const LIBS={xlsx:'xlsx@0.18.5/dist/xlsx.full.min.js',jspdf:'jspdf@2.5.1/dist/jspdf.umd.min.js',zip:'jszip@3.10.1/dist/jszip.min.js',mammoth:'mammoth@1.6.0/mammoth.browser.min.js',marked:'marked@4.3.0/marked.min.js',pdfjs:'pdfjs-dist@3.11.174/build/pdf.min.js'};
+async function need(k){
+ await lib(CDN+LIBS[k]);
+ if(k==='pdfjs'&&!need.w){const t=await(await fetch(CDN+'pdfjs-dist@3.11.174/build/pdf.worker.min.js')).text();pdfjsLib.GlobalWorkerOptions.workerSrc=need.w=URL.createObjectURL(new Blob([t],{type:'text/javascript'}))}
+}
+const esc=x=>String(x??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function imgToCanvas(file,white){
+ let src;
+ try{src=await createImageBitmap(file)}catch(_){
+  const u=URL.createObjectURL(file),im=new Image();im.src=u;await im.decode();src=im;
+  src.width=im.naturalWidth||1024;src.height=im.naturalHeight||1024;
+ }
+ const c=document.createElement('canvas');c.width=src.width;c.height=src.height;
+ const x=c.getContext('2d');
+ if(white){x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height)}
+ x.drawImage(src,0,0,c.width,c.height);src.close&&src.close();
+ return c;
+}
+async function canvasBlob(c,mime){
+ const b=await new Promise(r=>c.toBlob(r,mime,.92));
+ c.width=c.height=0;
+ if(!b||b.type!==mime)throw new Error('此瀏覽器不支援輸出該格式');
+ return b;
+}
+async function pack(bl,f,t){
+ if(bl.length===1)return bl[0];
+ await need('zip');const z=new JSZip(),b=f.name.replace(/\.[^.]+$/,'');
+ bl.forEach((x,i)=>z.file(b+'-'+(i+1)+'.'+t,x));
+ const r=await z.generateAsync({type:'blob'});r.zipped=1;return r;
+}
+async function pdfDoc(f){await need('pdfjs');return pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise}
+async function pdfImgs(f,mime,prog){
+ const d=await pdfDoc(f),out=[];
+ for(let i=1;i<=d.numPages;i++){
+  const p=await d.getPage(i),v=p.getViewport({scale:2}),c=document.createElement('canvas');
+  c.width=v.width;c.height=v.height;const x=c.getContext('2d');
+  x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+  await p.render({canvasContext:x,viewport:v}).promise;
+  out.push(await canvasBlob(c,mime));prog(i/d.numPages);
+ }
+ return out;
+}
+async function pdfText(f){
+ const d=await pdfDoc(f);let s='';
+ for(let i=1;i<=d.numPages;i++){const t=await(await d.getPage(i)).getTextContent();s+=t.items.map(x=>x.str+(x.hasEOL?'\n':'')).join('')+'\n\n'}
+ return s;
+}
+const SH={xlsx:1,xls:1,ods:1,csv:1,tsv:1,json:1,xml:1,yaml:1};
+const SHIN=['xlsx','xls','xlsm','xlsb','ods','fods','csv','tsv','json'];
+async function sheetWB(f){
+ await need('xlsx');const e=ext(f.name),wb=XLSX.utils.book_new();
+ if(e==='json'){let j=JSON.parse(await f.text());if(!Array.isArray(j))j=[j];XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(j),'Sheet1');return wb}
+ return ['csv','tsv','html','htm'].includes(e)?XLSX.read(await f.text(),{type:'string'}):XLSX.read(await f.arrayBuffer());
+}
+async function sheetOut(f,t){
+ const wb=await sheetWB(f),ws=wb.Sheets[wb.SheetNames[0]];
+ if(['xlsx','xls','ods'].includes(t))return new Blob([XLSX.write(wb,{bookType:t,type:'array'})]);
+ if(t==='csv')return new Blob(['\ufeff'+XLSX.utils.sheet_to_csv(ws)],{type:'text/csv'});
+ if(t==='tsv')return new Blob(['\ufeff'+XLSX.utils.sheet_to_csv(ws,{FS:'\t'})]);
+ const o=XLSX.utils.sheet_to_json(ws);
+ if(t==='json')return new Blob([JSON.stringify(o,null,2)],{type:'application/json'});
+ if(t==='xml')return new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n<rows>\n'+o.map(r=>'  <row>'+Object.entries(r).map(([k,v])=>{k=k.replace(/[^\w.-]/g,'_');if(/^[\d.-]/.test(k))k='_'+k;return '<'+k+'>'+esc(v)+'</'+k+'>'}).join('')+'</row>').join('\n')+'\n</rows>']);
+ return new Blob([o.map(r=>Object.entries(r).map(([k,v],i)=>(i?'  ':'- ')+JSON.stringify(k)+': '+JSON.stringify(v)).join('\n')).join('\n')]);
+}
+async function toText(f){
+ const e=ext(f.name);
+ if(e==='pdf')return pdfText(f);
+ if(e==='docx'){await need('mammoth');return(await mammoth.extractRawText({arrayBuffer:await f.arrayBuffer()})).value}
+ if(SHIN.includes(e)&&!['csv','tsv','json'].includes(e)){const wb=await sheetWB(f);return XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])}
+ const s=await f.text();
+ return e==='html'||e==='htm'?new DOMParser().parseFromString(s,'text/html').body.textContent:s;
+}
+async function toHtml(f){
+ const e=ext(f.name);
+ if(e==='docx'){await need('mammoth');return(await mammoth.convertToHtml({arrayBuffer:await f.arrayBuffer()})).value}
+ if(e==='md'||e==='markdown'){await need('marked');return marked.parse(await f.text())}
+ if(e==='html'||e==='htm')return f.text();
+ if(SHIN.includes(e)){const wb=await sheetWB(f);return XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[0]])}
+ return '<pre style="white-space:pre-wrap">'+esc(await toText(f))+'</pre>';
+}
+const wrap=h=>/<html/i.test(h)?h:'<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'+h+'</body></html>';
+function textPdf(text){
+ const {jsPDF}=jspdf,pdf=new jsPDF({unit:'pt',format:'a4',compress:true}),W=1240,H=1754,M=90,LH=38;
+ const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+ const fresh=()=>{x.fillStyle='#fff';x.fillRect(0,0,W,H);x.fillStyle='#000';x.font='26px "Noto Sans TC",system-ui,sans-serif';x.textBaseline='top'};
+ let y=M,first=true;fresh();
+ const flush=()=>{if(!first)pdf.addPage();first=false;pdf.addImage(c.toDataURL('image/jpeg',.85),'JPEG',0,0,595.28,841.89);fresh();y=M};
+ const put=s=>{if(y+LH>H-M)flush();x.fillText(s,M,y);y+=LH};
+ for(const p of text.replace(/\r/g,'').split('\n')){
+  let l='';
+  for(const ch of p){if(x.measureText(l+ch).width>W-2*M){put(l);l=ch}else l+=ch}
+  put(l);
+ }
+ flush();return pdf.output('blob');
+}
+async function imgPdf(f){
+ const c=await imgToCanvas(f,true),{jsPDF}=jspdf;
+ const pdf=new jsPDF({orientation:c.width>c.height?'l':'p',unit:'px',format:[c.width,c.height],hotfixes:['px_scaling']});
+ pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',0,0,c.width,c.height);
+ return pdf.output('blob');
+}
+async function run(it,t,prog){
+ const f=it.file,e=ext(f.name),img=f.type.startsWith('image/')||e==='svg';
+ if(t==='zip'){await need('zip');const z=new JSZip();z.file(f.name,f);return z.generateAsync({type:'blob',compression:'DEFLATE'},m=>prog(m.percent/100))}
+ if(t==='base64')return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(new Blob([fr.result.split(',')[1]]));fr.readAsDataURL(f)});
+ if(SH[t]){if(!SHIN.includes(e)&&e!=='html'&&e!=='htm')throw new Error('此輸入檔無法轉成表格資料');return sheetOut(f,t)}
+ if(t==='pdf'){await need('jspdf');if(e==='pdf')return f;return img?imgPdf(f):textPdf(await toText(f))}
+ if(t==='txt')return new Blob([await toText(f)]);
+ if(t==='html')return new Blob([wrap(await toHtml(f))],{type:'text/html'});
+ if(t==='doc')return new Blob(['\ufeff'+wrap(await toHtml(f))],{type:'application/msword'});
+ if(CANVAS[t]){
+  if(e==='pdf')return pack(await pdfImgs(f,CANVAS[t],prog),f,t);
+  if(img)return canvasBlob(await imgToCanvas(f,t==='jpg'),CANVAS[t]);
+  throw new Error('此輸入檔無法轉成圖片');
+ }
+ if(AV[t])return viaFF(f,t,prog);
+ throw new Error('不支援的組合');
+}
+async function viaFF(file,t,prog){
+ const f=await loadFF();
+ const inName='in.'+(ext(file.name)||'bin'),out='out.'+t;
+ f.setProgress(({ratio})=>prog(Math.max(0,Math.min(1,ratio))));
+ f.FS('writeFile',inName,new Uint8Array(await file.arrayBuffer()));
+ try{
+  await f.run('-i',inName,...AV[t],out);
+  const data=f.FS('readFile',out);
+  return new Blob([data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength)]);
+ }finally{
+  for(const n of [inName,out]){try{f.FS('unlink',n)}catch(_){}}
+ }
+}
+
+async function convert(it,t){
+ const st=it.li.querySelector('.st'),bar=it.li.querySelector('.bar i');
+ const prog=r=>{bar.style.width=(r*100).toFixed(0)+'%';st.textContent='轉換中 '+(r*100|0)+'%'};
+ st.className='st m';st.textContent='轉換中…';
+ try{
+  const b=await run(it,t,prog);
+  bar.style.width='100%';
+  if(it.url)URL.revokeObjectURL(it.url);
+  it.url=URL.createObjectURL(b);
+  const x=b.zipped?'zip':t==='base64'?'b64.txt':t,name=it.file.name.replace(/\.[^.]+$/,'')+'.'+x;
+  st.innerHTML='';
+  const a=document.createElement('a');a.className='dl';a.href=it.url;a.download=name;a.textContent='下載 '+name+'（'+size(b.size)+'）';
+  st.append(a);
+ }catch(e){
+  st.className='st err';st.textContent='失敗：'+(e.message||e);
+ }
+}
+
+$('go').onclick=async()=>{
+ if(busy)return;
+ busy=true;$('go').disabled=true;$('go').textContent='轉換中…';
+ await keepAwake();
+ const t=$('fmt').value;
+ for(const it of items){ if(!it.done||it.t!==t){await convert(it,t);it.done=true;it.t=t} }
+ busy=false;$('go').disabled=false;$('go').textContent='開始轉換';
+ try{lock&&await lock.release()}catch(_){}
+ lock=null;
+};
+</script>
+</body>
+</html>
