@@ -6,7 +6,7 @@
 <title>LocalConvert</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<meta name="theme-color" content="#0e7c5a">
+<meta name="theme-color" content="#112b46">
 <style>
 :root{--bg:#f3f5f2;--fg:#17211b;--mut:#5d6b62;--card:#fff;--line:#cfd8d1;--ac:#0e7c5a;--acfg:#fff;--err:#b3261e}
 @media(prefers-color-scheme:dark){:root{--bg:#121a15;--fg:#e6efe8;--mut:#93a499;--card:#1a251e;--line:#2f4036;--ac:#3fcf9b;--acfg:#06241a;--err:#ff8a80}}
@@ -106,7 +106,7 @@ d.addEventListener('drop',e=>add(e.dataTransfer.files));
 $('clr').onclick=()=>{if(busy)return;items.forEach(i=>i.url&&URL.revokeObjectURL(i.url));items=[];$('list').innerHTML='';$('go').disabled=true};
 
 addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue=''}});
-async function keepAwake(){try{if('wakeLock' in navigator)lock=await navigator.wakeLock.request('screen')}catch(_){}}
+async function keepAwake(){try{if('wakeLock' in navigator)lock=await Promise.race([navigator.wakeLock.request('screen'),new Promise((_,r)=>setTimeout(r,1500))])}catch(_){}}
 document.addEventListener('visibilitychange',()=>{if(busy&&document.visibilityState==='visible')keepAwake()});
 
 async function loadFF(set){
@@ -234,10 +234,14 @@ async function run(it,t,prog){
   if(img)return canvasBlob(await imgToCanvas(f,t==='jpg'),CANVAS[t]);
   throw new Error('此輸入檔無法轉成圖片');
  }
- if(AV[t])return viaFF(f,t,prog);
+ if(AV[t]){
+  if(['pdf','docx','doc','xlsx','xls','xlsm','xlsb','ods','fods','csv','tsv','json','txt','md','markdown','html','htm','xml','yaml','yml','zip','rtf'].includes(e))throw new Error('這種檔案不能轉成 '+t+'。請改選其他格式，例如 PDF 可轉成 png、jpg、txt');
+  return viaFF(f,t,prog);
+ }
  throw new Error('不支援的組合');
 }
 async function viaFF(file,t,prog){
+ if(!ff)prog.msg&&prog.msg('首次使用，下載轉檔引擎中（約 25 MB），請稍候…');
  const f=await loadFF();
  const inName='in.'+(ext(file.name)||'bin'),out='out.'+t;
  f.setProgress(({ratio})=>prog(Math.max(0,Math.min(1,ratio))));
@@ -254,6 +258,7 @@ async function viaFF(file,t,prog){
 async function convert(it,t){
  const st=it.li.querySelector('.st'),bar=it.li.querySelector('.bar i');
  const prog=r=>{bar.style.width=(r*100).toFixed(0)+'%';st.textContent='轉換中 '+(r*100|0)+'%'};
+ prog.msg=m=>st.textContent=m;
  st.className='st m';st.textContent='轉換中…';
  try{
   const b=await run(it,t,prog);
